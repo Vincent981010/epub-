@@ -2,18 +2,18 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>EPUB 繁體化工具 (路徑保護版)</title>
+    <title>EPUB 繁體轉換工具 (絕對穩定版)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.min.js"></script>
     <style>
         body { font-family: sans-serif; background: #f4f4f9; padding: 20px; }
-        .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 10px; }
         #log { background: #333; color: #0f0; padding: 10px; height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px; }
     </style>
 </head>
 <body>
 <div class="container">
-    <h3>EPUB 繁體轉換 (路徑嚴格保護版)</h3>
+    <h3>EPUB 繁體化 (不改檔名，確保目錄正常)</h3>
     <input type="file" id="fileInput" accept=".epub" multiple>
     <div id="log">系統準備就緒...</div>
 </div>
@@ -21,6 +21,8 @@
 <script>
     const logEl = document.getElementById('log');
     function log(m) { logEl.innerText += '\n' + m; logEl.scrollTop = logEl.scrollHeight; }
+    
+    // 初始化轉換引擎 (簡體轉繁體)
     const converter = OpenCC.Converter({ from: 'cn', to: 'twp' });
 
     document.getElementById('fileInput').onchange = async (e) => {
@@ -29,32 +31,33 @@
             try {
                 const zip = await new JSZip().loadAsync(file);
                 const newZip = new JSZip();
-
-                // 遍歷原始檔案結構
+                
+                // 遍歷所有檔案
                 for (const [path, entry] of Object.entries(zip.files)) {
                     if (entry.dir) {
                         newZip.folder(path);
                         continue;
                     }
-
-                    // --- 關鍵修正：絕不修改 path ---
-                    // 只檢查副檔名，決定是否處理內容
+                    
+                    // 判斷是否為文字相關檔案 (才進行內容轉換)
+                    // 絕不修改 path (檔名)
                     const isText = path.match(/\.(html|xhtml|xml|ncx|opf|txt|css|js|plist)$/i);
-
+                    
                     if (isText) {
+                        // 讀取內容並轉換
                         const content = await entry.async("string");
-                        // 轉換內容，但保持原始 path 不變
                         newZip.file(path, converter(content));
                     } else {
-                        // 圖片、字體等二進位檔案，直接原封不動拷貝
+                        // 非文字檔 (圖片、字體) 原封不動拷貝
                         newZip.file(path, await entry.async("blob"));
                     }
                 }
                 
+                // 產生檔案
                 const blob = await newZip.generateAsync({ type: "blob" });
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
-                a.download = "TW_" + file.name; // 只有輸出檔案名稱可以改
+                a.download = "繁體_" + file.name; // 僅輸出時改檔名，不影響內部
                 a.click();
                 log("✅ 成功: " + file.name);
             } catch (err) {
