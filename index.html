@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>EPUB 繁體轉換工具 (Python 邏輯版)</title>
+    <title>EPUB 繁體轉換器</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.min.js"></script>
     <style>
@@ -13,7 +13,7 @@
 </head>
 <body>
 <div class="container">
-    <h3>EPUB 繁體轉換 (Python 邏輯移植版)</h3>
+    <h3>EPUB 繁體轉換 (完全對齊 Python 邏輯)</h3>
     <input type="file" id="fileInput" accept=".epub" multiple>
     <div id="log">系統準備就緒...</div>
 </div>
@@ -25,46 +25,44 @@
 
     document.getElementById('fileInput').onchange = async (e) => {
         for (const file of e.target.files) {
-            log("🚀 開始處理: " + file.name);
+            log("🚀 啟動深度轉換: " + file.name);
             try {
                 const zip = await new JSZip().loadAsync(file);
                 const newZip = new JSZip();
                 
-                // 1. 建立路徑映射表 (Old Path -> New Path)
+                // 1. 建立完整路徑映射表 (Old Path -> New Path)
                 const pathMap = new Map();
-                zip.forEach((path, entry) => {
+                zip.forEach((path) => {
                     pathMap.set(path, converter(path));
                 });
 
-                // 2. 轉換內容與連結
+                // 2. 開始轉換檔案
                 for (const [oldPath, entry] of Object.entries(zip.files)) {
-                    const newPath = pathMap.get(oldPath);
+                    if (entry.dir) continue;
                     
-                    if (entry.dir) {
-                        newZip.folder(newPath);
-                        continue;
-                    }
+                    const newPath = pathMap.get(oldPath);
+                    const isTextFile = oldPath.match(/\.(html|xhtml|xml|ncx|opf|txt|css|js|plist)$/i);
 
-                    // 判斷是否為需要檢查連結的文字檔
-                    const isIndexFile = oldPath.match(/\.(html|xhtml|xml|ncx|opf|txt|css|js|plist)$/i);
-
-                    if (isIndexFile) {
+                    if (isTextFile) {
                         let content = await entry.async("string");
                         
-                        // 轉換內容文字
+                        // 先將內容本身的字體轉繁體
                         let newContent = converter(content);
 
-                        // 核心邏輯：遍歷所有映射表，將內容中的舊連結替換為新連結
-                        for (const [oP, nP] of pathMap.entries()) {
-                            // 替換一般字串路徑
+                        // 核心：全域替換連結 (取代路徑)
+                        // 依照路徑長度排序，確保替換時不會發生部分取代錯誤
+                        const sortedPaths = Array.from(pathMap.entries()).sort((a, b) => b[0].length - a[0].length);
+                        
+                        for (const [oP, nP] of sortedPaths) {
+                            // 替換一般連結
                             newContent = newContent.split(oP).join(nP);
-                            // 替換 URL 編碼後的路徑 (關鍵！)
+                            // 替換編碼過的 URL 連結 (例如 %E7%AC%AC...)
                             newContent = newContent.split(encodeURI(oP)).join(encodeURI(nP));
                         }
                         
                         newZip.file(newPath, newContent);
                     } else {
-                        // 圖片等二進位檔，路徑更名但內容不變
+                        // 非文字檔，只更名，不轉換內容
                         newZip.file(newPath, await entry.async("blob"));
                     }
                 }
@@ -72,11 +70,11 @@
                 const blob = await newZip.generateAsync({ type: "blob" });
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
-                a.download = converter(file.name); // 輸出檔名也繁體化
+                a.download = converter(file.name);
                 a.click();
-                log("✅ 成功: " + converter(file.name));
+                log("✅ 成功轉存: " + converter(file.name));
             } catch (err) {
-                log("❌ 轉換失敗: " + err.message);
+                log("❌ 發生嚴重錯誤: " + err.message);
                 console.error(err);
             }
         }
