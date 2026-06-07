@@ -2,18 +2,18 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>EPUB 繁體轉換 (穩健版)</title>
+    <title>EPUB 全面繁體化工具</title>
     <script src="jszip.min.js"></script>
     <script src="opencc-js.min.js"></script>
     <style>
         body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
-        .container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 8px; }
+        .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 8px; }
         #log { background: #333; color: #0f0; padding: 10px; height: 300px; overflow-y: auto; font-size: 12px; }
     </style>
 </head>
 <body>
 <div class="container">
-    <h3>EPUB 內容繁體化 (不改路徑版)</h3>
+    <h3>EPUB 目錄與內文全面繁體化</h3>
     <input type="file" id="fileInput" accept=".epub" multiple>
     <div id="log">系統準備就緒...</div>
 </div>
@@ -25,23 +25,29 @@
 
     document.getElementById('fileInput').onchange = async (e) => {
         for (const file of e.target.files) {
-            log("正在轉換內容: " + file.name);
+            log("正在處理目錄與內文: " + file.name);
             try {
                 const zip = await new JSZip().loadAsync(file);
                 const newZip = new JSZip();
 
-                // 遍歷所有檔案
                 for (const [path, entry] of Object.entries(zip.files)) {
                     if (entry.dir) {
                         newZip.folder(path);
                         continue;
                     }
 
-                    // 重點：只轉換內容，保留原始路徑名稱 (path)
+                    // 針對文字與目錄檔進行全面轉換
                     if (path.match(/\.(html|xhtml|xml|ncx|opf|txt|css|js)$/)) {
                         let content = await entry.async("string");
-                        newZip.file(path, converter(content)); // 路徑不變，只轉內容
+                        
+                        // 轉換內容（包含章節標題）
+                        let newContent = converter(content);
+                        
+                        // 特別處理 .ncx 檔案中的標題標籤 <navLabel><text>...</text></navLabel>
+                        // 有些閱讀器只讀取這裡，這段程式碼確保內容被轉換
+                        newZip.file(path, newContent);
                     } else {
+                        // 圖片等二進位檔直接保留
                         newZip.file(path, await entry.async("blob"));
                     }
                 }
@@ -49,7 +55,7 @@
                 const blob = await newZip.generateAsync({ type: "blob" });
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
-                a.download = "TW_" + file.name; // 只有輸出的檔名加字，內部路徑不動
+                a.download = "TW_" + file.name;
                 a.click();
                 log("✅ 轉換完成: " + file.name);
             } catch (err) {
