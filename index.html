@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>EPUB 繁體轉換器</title>
+    <title>EPUB 專業繁體轉換器</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.min.js"></script>
     <style>
@@ -13,7 +13,7 @@
 </head>
 <body>
 <div class="container">
-    <h3>EPUB 繁體轉換 (完全對齊 Python 邏輯)</h3>
+    <h3>EPUB 專業繁體轉換 (完全對齊 Python 邏輯)</h3>
     <input type="file" id="fileInput" accept=".epub" multiple>
     <div id="log">系統準備就緒...</div>
 </div>
@@ -35,8 +35,11 @@
                 zip.forEach((path) => {
                     pathMap.set(path, converter(path));
                 });
+                
+                // 排序：確保長路徑優先被替換 (例如先換 "Text/10.xhtml" 再換 "Text/1.xhtml")
+                const sortedPaths = Array.from(pathMap.entries()).sort((a, b) => b[0].length - a[0].length);
 
-                // 2. 開始轉換檔案
+                // 2. 開始轉換
                 for (const [oldPath, entry] of Object.entries(zip.files)) {
                     if (entry.dir) continue;
                     
@@ -46,23 +49,23 @@
                     if (isTextFile) {
                         let content = await entry.async("string");
                         
-                        // 先將內容本身的字體轉繁體
+                        // 先將內容本身的文字轉繁體
                         let newContent = converter(content);
 
-                        // 核心：全域替換連結 (取代路徑)
-                        // 依照路徑長度排序，確保替換時不會發生部分取代錯誤
-                        const sortedPaths = Array.from(pathMap.entries()).sort((a, b) => b[0].length - a[0].length);
-                        
+                        // 核心：全域替換連結 (處理檔案內的索引)
+                        // 我們要替換掉所有指向舊檔名的連結
                         for (const [oP, nP] of sortedPaths) {
-                            // 替換一般連結
+                            if (oP === nP) continue;
+                            
+                            // 替換一般字串連結
                             newContent = newContent.split(oP).join(nP);
-                            // 替換編碼過的 URL 連結 (例如 %E7%AC%AC...)
+                            // 替換 URL 編碼後的連結 (EPUB 常見)
                             newContent = newContent.split(encodeURI(oP)).join(encodeURI(nP));
                         }
                         
                         newZip.file(newPath, newContent);
                     } else {
-                        // 非文字檔，只更名，不轉換內容
+                        // 非文字檔，直接移動不修改內容
                         newZip.file(newPath, await entry.async("blob"));
                     }
                 }
@@ -74,7 +77,7 @@
                 a.click();
                 log("✅ 成功轉存: " + converter(file.name));
             } catch (err) {
-                log("❌ 發生嚴重錯誤: " + err.message);
+                log("❌ 錯誤: " + err.message);
                 console.error(err);
             }
         }
