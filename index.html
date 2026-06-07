@@ -2,66 +2,64 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>完全離線版 EPUB 繁體化工具</title>
-    <script>
-        // 為了確保您可以運作，這裡直接貼入 JSZip 的輕量化載入邏輯 
-        // 由於程式碼長度限制，若此處載入仍有疑慮，請直接將此檔案視為離線工具。
-    </script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    
+    <title>EPUB 繁體化工具 (本地版)</title>
+    <script src="jszip.min.js"></script>
+    <script src="opencc-js.min.js"></script>
     <style>
         body { font-family: sans-serif; background: #f4f4f9; padding: 40px; text-align: center; }
         .container { max-width: 600px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        .btn { background: #27ae60; color: white; padding: 15px 25px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
-        #log { background: #333; color: #fff; padding: 15px; text-align: left; height: 200px; overflow-y: auto; margin-top: 20px; font-family: monospace; }
+        .btn { background: #3498db; color: white; padding: 15px 25px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
+        #log { background: #333; color: #0f0; padding: 15px; text-align: left; height: 300px; overflow-y: auto; margin-top: 20px; font-family: monospace; }
     </style>
 </head>
 <body>
-
 <div class="container">
-    <h1>EPUB 繁體化工具 (離線模式)</h1>
+    <h1>EPUB 繁體化工具</h1>
     <input type="file" id="fileInput" accept=".epub" multiple style="display:none">
     <button class="btn" onclick="document.getElementById('fileInput').click()">選擇 EPUB 檔案</button>
-    <div id="log">系統已就緒，無需連網即可運作。</div>
+    <div id="log">系統準備就緒，請選擇檔案開始轉換...</div>
 </div>
 
 <script>
     const logEl = document.getElementById('log');
     function log(m) { logEl.innerText += '\n' + m; logEl.scrollTop = logEl.scrollHeight; }
 
-    // 簡轉繁對照字典 (您可以隨時補充更多字)
-    const dict = {"简":"簡","体":"體","软":"軟","汇":"匯","档":"檔","辑":"輯","机":"機","网":"網","页":"頁","备":"備","转":"轉","欢":"歡","应":"應","用":"用","这":"這","个":"個","标":"標","书":"書","笔":"筆","练":"練","释":"釋","细":"細","统":"統","载":"載","功":"功","成":"成","确":"確","认":"認","态":"態","置":"置","请":"請","连":"連","后":"後","动":"動","测":"測","查":"查","与":"與","库":"庫","项":"項","编":"編","码":"碼","浏":"瀏","览":"覽","器":"器","点":"點","击":"擊"};
-
-    function convert(text) {
-        let result = text;
-        for (let key in dict) {
-            result = result.split(key).join(dict[key]);
-        }
-        return result;
-    }
+    const converter = OpenCC.Converter({ from: 'cn', to: 'twp' });
 
     document.getElementById('fileInput').onchange = async (e) => {
-        log("開始轉換...");
         for (const file of e.target.files) {
+            log("開始處理: " + file.name);
             try {
                 const zip = await new JSZip().loadAsync(file);
                 const newZip = new JSZip();
                 
                 for (const path in zip.files) {
-                    if (zip.files[path].dir) continue;
-                    let content = await zip.files[path].async("string");
-                    newZip.file(convert(path), convert(content));
+                    const entry = zip.files[path];
+                    const newPath = converter(path); // 檔名轉繁體
+                    
+                    if (entry.dir) continue;
+                    
+                    // 針對文字檔與清單檔進行內容轉換
+                    if (path.match(/\.(html|xhtml|xml|ncx|opf|txt|css)$/)) {
+                        let content = await entry.async("string");
+                        newZip.file(newPath, converter(content));
+                    } else {
+                        // 圖片或二進位檔直接複製
+                        newZip.file(newPath, await entry.async("blob"));
+                    }
                 }
+                
                 const blob = await newZip.generateAsync({ type: "blob" });
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
-                a.download = "TW_" + file.name;
+                a.download = converter(file.name); // 檔名轉繁體，不加任何字
                 a.click();
-                log("✅ 完成: " + file.name);
+                log("✅ 成功: " + converter(file.name));
             } catch (err) {
-                log("❌ 轉換失敗: " + err.message);
+                log("❌ 失敗: " + err.message);
             }
         }
+        log("--- 等待下一批 ---");
     };
 </script>
 </body>
