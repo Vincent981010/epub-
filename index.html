@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>EPUB 簡轉繁</title>
+    <title>EPUB 繁體轉換工具</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.min.js"></script>
     <style>
@@ -13,7 +13,7 @@
 </head>
 <body>
 <div class="container">
-    <h3>EPUB 簡轉繁</h3>
+    <h3>EPUB 繁體轉換</h3>
     <input type="file" id="fileInput" accept=".epub" multiple>
     <div id="log">系統準備就緒... (將檔案拖入或點擊選擇)</div>
 </div>
@@ -22,10 +22,7 @@
     const logEl = document.getElementById('log');
     function log(m) { logEl.innerText += '\n' + m; logEl.scrollTop = logEl.scrollHeight; }
 
-    // 1. 預先編譯好要用到的正則表達式 (完全對應你的 Python 邏輯)
-    // 用來把隱藏的 %XX 解碼回真正的中文字
     const urlPattern = /([a-zA-Z0-9_:-]*(?:href|src))\s*=\s*(['"])(.*?)\2/gi;
-    // 強制將標頭的編碼宣告洗成 utf-8
     const xmlEncPattern = /(<\?xml[^>]+encoding\s*=\s*['"])[a-zA-Z0-9\-]+(['"])/gi;
     const metaEncPattern = /(<meta[^>]+charset\s*=\s*['"]?)[a-zA-Z0-9\-]+(['"]?)/gi;
 
@@ -44,54 +41,43 @@
                 const zip = await new JSZip().loadAsync(file);
                 const newZip = new JSZip();
 
-                // 處理 mimetype (如果有，保持不壓縮寫入)
                 if (zip.files['mimetype']) {
                     const mimeContent = await zip.file('mimetype').async('string');
                     newZip.file('mimetype', mimeContent);
                 }
 
                 for (const [path, entry] of Object.entries(zip.files)) {
-                    // 跳過資料夾和已處理的 mimetype
                     if (entry.dir || path === 'mimetype') continue;
 
                     const isTextFile = path.match(/\.(html|xhtml|htm|ncx|opf|xml|txt|css)$/i);
-                    
-                    // 實體檔案路徑同步翻譯，讓它跟之後解碼+翻譯過的連結 100% 吻合
                     const newPath = converter(path);
 
                     if (isTextFile) {
                         let content = await entry.async("string");
 
-                        // A. 遇到超連結，先把 URL 亂碼還原成真正的文字
                         content = content.replace(urlPattern, (match, attr, quote, urlVal) => {
                             try {
                                 return `${attr}=${quote}${decodeURIComponent(urlVal)}${quote}`;
                             } catch (err) {
-                                return match; // 如果解碼失敗，就保留原樣
+                                return match;
                             }
                         });
 
-                        // B. 進行全文簡繁轉換 (這時剛才解碼出來的中文也會一起被轉成繁體)
                         content = converter(content);
 
-                        // C. 【關鍵修復】強制修改 XML/HTML 標頭，宣告為標準 UTF-8
                         content = content.replace(xmlEncPattern, "$1utf-8$2");
                         content = content.replace(metaEncPattern, "$1utf-8$2");
 
-                        // D. 統一寫回新檔案
                         newZip.file(newPath, content);
                     } else {
-                        // 圖片、字型等二進位檔案直接複製內容，但路徑(檔名)已經轉成繁體了
                         newZip.file(newPath, await entry.async("blob"));
                     }
                 }
 
-                // 重新打包成 EPUB
                 const blob = await newZip.generateAsync({ type: "blob", mimeType: "application/epub+zip" });
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
                 
-                // 輸出資料夾/檔名也轉繁體
                 const translatedFileName = converter(file.name);
                 a.download = translatedFileName;
                 a.click();
