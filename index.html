@@ -8,12 +8,34 @@
     <style>
         body { font-family: sans-serif; background: #f4f4f9; padding: 20px; }
         .container { max-width: 650px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        
+        /* 拖曳專用落點區域 */
+        #dropZone {
+            border: 3px dashed #b4b4d8;
+            border-radius: 8px;
+            padding: 40px 20px;
+            text-align: center;
+            background: #f9f9ff;
+            color: #555;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-bottom: 20px;
+        }
+        #dropZone.dragover {
+            background: #e1e1ff;
+            border-color: #6666cc;
+            color: #222;
+        }
+        
         .btn-group { display: flex; gap: 15px; margin-bottom: 20px; }
         .btn-wrapper { flex: 1; text-align: center; }
-        .btn-wrapper label { display: block; background: #007bff; color: white; padding: 15px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: background 0.2s; box-shadow: 0 2px 4px rgba(0,123,255,0.2); }
+        .btn-wrapper label { display: block; background: #007bff; color: white; padding: 12px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; transition: background 0.2s; }
         .btn-wrapper label:hover { background: #0056b3; }
         .btn-wrapper input[type="file"] { display: none; }
-        .btn-wrapper .hint { font-size: 12px; color: #666; margin-top: 5px; display: block; }
+        .btn-wrapper .hint { font-size: 11px; color: #666; margin-top: 5px; display: block; }
+        
         #log { background: #333; color: #0f0; padding: 12px; height: 380px; overflow-y: auto; font-family: monospace; font-size: 13px; line-height: 1.5; border-radius: 6px; }
     </style>
 </head>
@@ -21,32 +43,36 @@
 <div class="container">
     <h3>EPUB 繁體轉換</h3>
     
+    <div id="dropZone">
+        動態拖曳區：請將【多個 EPUB 檔案】或【整個書庫資料夾】拖曳到這裡
+        <div style="font-size: 12px; color: #888; font-weight: normal; margin-top: 8px;">(支援資料夾內含多層子資料夾的深度掃描)</div>
+    </div>
+    
     <div class="btn-group">
         <div class="btn-wrapper">
-            <label for="fileInput">📄 選擇多個檔案</label>
+            <label for="fileInput">📄 點擊選擇多個檔案</label>
             <input type="file" id="fileInput" accept=".epub" multiple>
-            <span class="hint">直接下載個別繁體書</span>
+            <span class="hint">適合分散的獨立電子書</span>
         </div>
         <div class="btn-wrapper">
-            <label for="folderInput" style="background: #28a745; box-shadow: 0 2px 4px rgba(40,167,69,0.2);">📂 選擇整個資料夾</label>
+            <label for="folderInput" style="background: #28a745;">📂 點擊選擇整個資料夾</label>
             <input type="file" id="folderInput" webkitdirectory directory multiple>
-            <span class="hint">包含子資料夾，打包成結構壓縮檔</span>
+            <span class="hint">透過瀏覽器選單選擇單一目錄</span>
         </div>
     </div>
 
-    <div id="log">系統準備就緒... (請選擇上方功能開始轉換)</div>
+    <div id="log">系統準備就緒... (請將資料夾拖入上方，或點擊按鈕開始轉換)</div>
 </div>
 
 <script>
     const logEl = document.getElementById('log');
     function log(m) { logEl.innerText += '\n' + m; logEl.scrollTop = logEl.scrollHeight; }
 
-    // 核心正則表達式
     const urlPattern = /([a-zA-Z0-9_:-]*(?:href|src))\s*=\s*(['"])(.*?)\2/gi;
     const xmlEncPattern = /(<\?xml[^>]+encoding\s*=\s*['"])[a-zA-Z0-9\-]+(['"])/gi;
     const metaEncPattern = /(<meta[^>]+charset\s*=\s*['"]?)[a-zA-Z0-9\-]+(['"]?)/gi;
 
-    // 通用 EPUB 核心轉換邏輯 (完全保留原本成功的解碼與轉換機制)
+    // 核心 EPUB 轉換邏輯
     async function processSingleEpub(file, converter) {
         const zip = await new JSZip().loadAsync(file);
         const newZip = new JSZip();
@@ -87,7 +113,6 @@
         return await newZip.generateAsync({ type: "blob", mimeType: "application/epub+zip" });
     }
 
-    // 檢查 OpenCC 是否就緒
     function checkOpenCC() {
         if (typeof OpenCC === 'undefined') {
             log("❌ 錯誤：OpenCC 尚未載入，請稍後再試或檢查網路連線。");
@@ -96,105 +121,170 @@
         return OpenCC.Converter({ from: 'cn', to: 'twp' });
     }
 
-    // 【模式一：多檔案選取處理】
-    document.getElementById('fileInput').onchange = async (e) => {
+    // 核心打包與路徑轉換分流器
+    async function handleExecution(itemsArray, isFolderMode, defaultPackageName) {
         const converter = checkOpenCC();
         if (!converter) return;
 
-        const files = Array.from(e.target.files).filter(f => f.name.toLowerCase().endsWith('.epub'));
-        if (files.length === 0) {
-            log("❌ 未選取任何 .epub 檔案。");
+        if (itemsArray.length === 0) {
+            log("❌ 未偵測到任何有效的 .epub 檔案。");
             return;
         }
 
         log("==================================================");
-        log(`🚀 開始批次轉換 ${files.length} 本獨立檔案...`);
-        log("==================================================");
+        if (isFolderMode) {
+            const translatedRootName = converter(defaultPackageName) + "_TW";
+            log(`📂 偵測到資料夾結構，共有 ${itemsArray.length} 本 EPUB 檔案。`);
+            log(`📦 系統將自動打包並維持原完整目錄結構至：${translatedRootName}.zip`);
+            log("==================================================");
 
-        for (const file of files) {
-            log(`🚀 正在處理: ${file.name}`);
-            try {
-                const convertedBlob = await processSingleEpub(file, converter);
-                const translatedFileName = converter(file.name);
-                
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(convertedBlob);
-                a.download = translatedFileName;
-                a.click();
-                log(`🎉 轉換完成！已下載: ${translatedFileName}`);
-            } catch (err) {
-                log(`❌ 轉換失敗: ${file.name} (${err.message})`);
-                console.error(err);
+            const masterZip = new JSZip();
+
+            for (const item of itemsArray) {
+                log(`🚀 深度處理中: ${item.relPath}`);
+                try {
+                    const convertedBlob = await processSingleEpub(item.file, converter);
+                    
+                    // 解析並翻譯相對路徑
+                    const pathParts = item.relPath.split('/');
+                    pathParts[0] = translatedRootName; // 替換根目錄為 繁體_TW
+                    for (let i = 1; i < pathParts.length; i++) {
+                        pathParts[i] = converter(pathParts[i]);
+                    }
+                    const translatedRelPath = pathParts.join('/');
+
+                    masterZip.file(translatedRelPath, convertedBlob);
+                    log(`✅ 已排入壓縮包結構: ${translatedRelPath}`);
+                } catch (err) {
+                    log(`❌ 轉換失敗: ${item.relPath} (${err.message})`);
+                }
+                log("--------------------------------------------------");
             }
-            log("--------------------------------------------------");
+
+            log("📦 正在將所有轉換後的結構封裝至壓縮檔中，請稍候...");
+            try {
+                const masterBlob = await masterZip.generateAsync({ type: "blob" });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(masterBlob);
+                a.download = `${translatedRootName}.zip`;
+                a.click();
+                log(`🎉 【全部轉換完成】已成功下載完整結構壓縮包：${translatedRootName}.zip`);
+            } catch (err) {
+                log(`❌ 壓縮檔封裝失敗: ${err.message}`);
+            }
+
+        } else {
+            log(`🚀 開始批次轉換 ${itemsArray.length} 本獨立檔案...`);
+            log("==================================================");
+            for (const item of itemsArray) {
+                log(`🚀 正在處理: ${item.file.name}`);
+                try {
+                    const convertedBlob = await processSingleEpub(item.file, converter);
+                    const translatedFileName = converter(item.file.name);
+                    
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(convertedBlob);
+                    a.download = translatedFileName;
+                    a.click();
+                    log(`🎉 轉換完成！已下載: ${translatedFileName}`);
+                } catch (err) {
+                    log(`❌ 轉換失敗: ${item.file.name} (${err.message})`);
+                }
+                log("--------------------------------------------------");
+            }
+            log("✅ 所有獨立檔案處理完畢。");
         }
-        log("✅ 所有獨立檔案處理完畢。");
+        log("==================================================");
+    }
+
+    // 【1. 處理高階拖曳事件 (核心修復：支援資料夾遞迴不崩潰)】
+    const dropZone = document.getElementById('dropZone');
+    
+    dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('dragover'); };
+    dropZone.ondragleave = () => { dropZone.classList.remove('dragover'); };
+    
+    dropZone.ondrop = async (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        
+        const items = e.dataTransfer.items;
+        if (!items) return;
+
+        const itemsArray = [];
+        let hasFolder = false;
+        let rootName = "EPUB_Folder";
+
+        // 遞迴讀取資料夾 Entry 的內建函式
+        async function traverseEntry(entry, currentPath) {
+            if (entry.isFile) {
+                if (entry.name.toLowerCase().endsWith('.epub')) {
+                    const file = await new Promise((res, rej) => entry.file(res, rej));
+                    itemsArray.push({ file: file, relPath: currentPath + entry.name });
+                }
+            } else if (entry.isDirectory) {
+                hasFolder = true;
+                const reader = entry.createReader();
+                
+                // 確保讀取目錄下所有的檔案（防止瀏覽器單次讀取數量限制）
+                const readAllEntries = async () => {
+                    return new Promise((res) => {
+                        let all = [];
+                        function read() {
+                            reader.readEntries((results) => {
+                                if (results.length === 0) { res(all); } 
+                                else { all = all.concat(results); read(); }
+                            });
+                        }
+                        read();
+                    });
+                };
+                
+                const entries = await readAllEntries();
+                for (const child of entries) {
+                    await traverseEntry(child, currentPath + entry.name + "/");
+                }
+            }
+        }
+
+        // 開始解析拖放進來的物件
+        for (let i = 0; i < items.length; i++) {
+            const entry = items[i].webkitGetAsEntry();
+            if (entry) {
+                if (entry.isDirectory && i === 0) {
+                    rootName = entry.name;
+                }
+                await traverseEntry(entry, "");
+            }
+        }
+
+        // 執行分流轉換
+        await handleExecution(itemsArray, hasFolder, rootName);
     };
 
-    // 【模式二：整個資料夾深度遞迴處理】
+    // 【2. 點擊按鈕：獨立多檔案選擇】
+    document.getElementById('fileInput').onchange = async (e) => {
+        const files = Array.from(e.target.files).filter(f => f.name.toLowerCase().endsWith('.epub'));
+        const itemsArray = files.map(f => ({ file: f, relPath: f.name }));
+        await handleExecution(itemsArray, false, "");
+        e.target.value = ""; // 清空 picker
+    };
+
+    // 【3. 點擊按鈕：整個資料夾選擇】
     document.getElementById('folderInput').onchange = async (e) => {
-        const converter = checkOpenCC();
-        if (!converter) return;
-
-        const allFiles = Array.from(e.target.files);
-        const epubFiles = allFiles.filter(f => f.name.toLowerCase().endsWith('.epub'));
-
-        if (epubFiles.length === 0) {
-            log("❌ 在選取的資料夾及其子目錄中找不到任何 .epub 檔案。");
+        const files = Array.from(e.target.files).filter(f => f.name.toLowerCase().endsWith('.epub'));
+        if (files.length === 0) {
+            log("❌ 選取的資料夾中找不到任何 .epub 檔案。");
             return;
         }
-
-        // 解析根資料夾名稱並翻譯，加上 _TW 作為輸出的目錄
-        const firstPath = epubFiles[0].webkitRelativePath;
-        const rootFolderName = firstPath.split('/')[0] || "EPUB_Folder";
-        const translatedRootName = converter(rootFolderName) + "_TW";
-
-        log("==================================================");
-        log(`📂 偵測到資料夾結構，共有 ${epubFiles.length} 本 EPUB 檔案。`);
-        log(`📦 系統將自動打包並維持原完整目錄結構至：${translatedRootName}.zip`);
-        log("==================================================");
-
-        const masterZip = new JSZip();
-
-        for (const file of epubFiles) {
-            // file.webkitRelativePath 格式為 "原資料夾/子資料夾/書名.epub"
-            const relPath = file.webkitRelativePath;
-            
-            // 拆解路徑，將最外層改為對應的繁體輸出資料夾，其餘路徑及檔名皆轉為繁體
-            const pathParts = relPath.split('/');
-            pathParts[0] = translatedRootName; 
-            for (let i = 1; i < pathParts.length; i++) {
-                pathParts[i] = converter(pathParts[i]);
-            }
-            const translatedRelPath = pathParts.join('/');
-
-            log(`🚀 深度處理中: ${relPath}`);
-            try {
-                // 執行轉換並取得個別 EPUB 的 Blob
-                const convertedBlob = await processSingleEpub(file, converter);
-                
-                // 將轉換後的 EPUB 塞入總壓縮檔內對應的相對路徑中位置
-                masterZip.file(translatedRelPath, convertedBlob);
-                log(`✅ 已排入壓縮包結構: ${translatedRelPath}`);
-            } catch (err) {
-                log(`❌ 轉換失敗: ${relPath} (${err.message})`);
-                console.error(err);
-            }
-            log("--------------------------------------------------");
+        
+        let rootName = "EPUB_Folder";
+        if (files[0].webkitRelativePath) {
+            rootName = files[0].webkitRelativePath.split('/')[0];
         }
 
-        log("📦 正在將所有轉換後的結構封裝至壓縮檔中，請稍候...");
-        try {
-            const masterBlob = await masterZip.generateAsync({ type: "blob" });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(masterBlob);
-            a.download = `${translatedRootName}.zip`;
-            a.click();
-            log(`🎉 【全部轉換完成】已成功下載完整結構壓縮包：${translatedRootName}.zip`);
-        } catch (err) {
-            log(`❌ 壓縮檔封裝失敗: ${err.message}`);
-        }
-        log("==================================================");
+        const itemsArray = files.map(f => ({ file: f, relPath: f.webkitRelativePath || f.name }));
+        await handleExecution(itemsArray, true, rootName);
+        e.target.value = ""; // 清空 picker
     };
 </script>
 </body>
